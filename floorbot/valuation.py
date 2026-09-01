@@ -79,6 +79,22 @@ class ValuationModel:
             return None
         return sum(x for x in sample if x >= floor) / len(sample)
 
+    def sample_size(self, context: dict) -> float:
+        """Effective sample count backing this context's curve, cascaded the same
+        coarse-to-fine way as the curve itself. Used by the bandit to decide how
+        much to trust the prior mean at each floor - a context whose curve rests
+        on thousands of low-floor observations should anchor the bandit much more
+        firmly than one propped up entirely by the global default.
+        """
+        group_keys = self._group_keys(context)
+        eff_n = 0.0
+        for level_idx, key in enumerate(group_keys):
+            sample = self.observations[level_idx].get(key, [])
+            if not sample:
+                continue
+            eff_n = self.shrink_k + len(sample)
+        return eff_n
+
     def revenue_curve(self, context: dict, floor_grid: Sequence[float]) -> dict[float, float]:
         """Expected revenue at each floor in `floor_grid`, cascading coarse-to-fine
         shrinkage the same way bandit.py does: each level's blended estimate
