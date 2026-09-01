@@ -17,7 +17,7 @@ from floorbot.config import BASE_URL, get_candidate_key
 from floorbot.policy import CONTEXT_KEY_LEVELS, FLOOR_GRID
 from floorbot.runner import SessionRunner
 from floorbot.valuation import ValuationModel
-from floorbot.warmstart import load_valuation_model_from_logs
+from floorbot.warmstart import load_bandit_from_logs, load_valuation_model_from_logs
 
 
 def main():
@@ -25,7 +25,11 @@ def main():
     parser.add_argument("--duration", type=float, default=None, help="seconds; omit to run until Ctrl+C")
     parser.add_argument(
         "--warm-start", nargs="*", default=[],
-        help="JSONL log file(s) or glob pattern(s) to seed the valuation model's prior from",
+        help=(
+            "JSONL log file(s) or glob pattern(s) to seed from: low-floor rows "
+            "build the valuation model's prior, and every row (any floor) also "
+            "directly seeds the bandit's own live arm statistics."
+        ),
     )
     parser.add_argument("--log", default=None, help="output JSONL path (default: data/run_<timestamp>.jsonl)")
     parser.add_argument("--candidate-key", default=None)
@@ -43,6 +47,9 @@ def main():
         print(f"[warm-start] ingested {used} low-floor observations from {len(warm_start_paths)} file(s)", file=sys.stderr)
 
     bandit = HierarchicalThompsonBandit(FLOOR_GRID, CONTEXT_KEY_LEVELS, valuation_model)
+    if warm_start_paths:
+        seeded = load_bandit_from_logs(bandit, warm_start_paths)
+        print(f"[warm-start] seeded bandit arms with {seeded} historical (context, floor, revenue) records", file=sys.stderr)
 
     def on_result(context, floor, result):
         bandit.update(context, floor, float(result.get("revenue") or 0.0))

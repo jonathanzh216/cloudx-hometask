@@ -31,3 +31,31 @@ def load_valuation_model_from_logs(model: ValuationModel, paths) -> int:
                 model.ingest(context, floor_used=floor_used, revenue=revenue)
                 used += 1
     return used
+
+
+def load_bandit_from_logs(bandit, paths) -> int:
+    """Replays every answered (context, floor, revenue) record across `paths`
+    directly into the bandit's own arm statistics via `update` - unlike
+    `load_valuation_model_from_logs`, this uses every floor that was tried, not
+    just the low-floor ones. Concretely: this lets a run seed real, observed
+    arm stats at floors 2/6/13/22/46 from anchoring_check.py's probe log,
+    instead of relying purely on the (low-floor-only, no-anchoring) valuation
+    model's extrapolated prior for those floors.
+    """
+    used = 0
+    for path in paths:
+        with open(path) as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                record = json.loads(line)
+                context = record.get("context")
+                floor_used = record.get("floor_set")
+                result = record.get("result") or {}
+                if context is None or floor_used is None:
+                    continue
+                revenue = float(result.get("revenue") or 0.0)
+                bandit.update(context, floor_used, revenue)
+                used += 1
+    return used
