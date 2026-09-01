@@ -16,9 +16,13 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 
-from .bandit import HierarchicalThompsonBandit
+from typing import Callable, Optional
+
 from .client import BidRequest, RateLimiter, SimulatorClient
 from .policy import build_context
+
+ChooseFloorFn = Callable[[dict], float]
+OnResultFn = Callable[[dict, float, dict], None]
 
 
 class RollingStats:
@@ -45,17 +49,26 @@ class RollingStats:
 
 
 class SessionRunner:
+    """Decoupled from any particular decision-making strategy on purpose: the
+    same reader-thread/worker-pool plumbing backs the live bandit policy, the
+    Phase 5 baseline-collection run (a constant floor), and the anchoring-check
+    probe run (a fixed rotation of floors) - only `choose_floor` and `on_result`
+    differ between them.
+    """
+
     def __init__(
         self,
         client: SimulatorClient,
-        bandit: HierarchicalThompsonBandit,
+        choose_floor: ChooseFloorFn,
         log_path: str,
+        on_result: Optional[OnResultFn] = None,
         num_workers: int = 24,
         rate_limit_qps: float = 18.0,
         print_every_s: float = 5.0,
     ):
         self.client = client
-        self.bandit = bandit
+        self.choose_floor_fn = choose_floor
+        self.on_result_fn = on_result
         self.log_path = log_path
         self.num_workers = num_workers
         self.rate_limiter = RateLimiter(rate_limit_qps)
@@ -76,7 +89,7 @@ class SessionRunner:
     def _handle_one(self, item: BidRequest) -> None:
         req = item.data
         context = build_context(req)
-        floor = self.bandit.choose_floor(context)
+        floor = self.choose_floor_fn(context)
 
         self.rate_limiter.acquire()
         t0 = time.monotonic()
@@ -87,7 +100,8 @@ class SessionRunner:
         filled = bool(result.get("filled", False))
         late = bool(result.get("late", False))
 
-        self.bandit.update(context, floor, revenue)
+        if self.on_result_fn:
+            self.on_result_fn(context, floor, result)
         self.stats.record(filled=filled, late=late, revenue=revenue)
         self._log(
             {

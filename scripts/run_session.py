@@ -44,10 +44,13 @@ def main():
 
     bandit = HierarchicalThompsonBandit(FLOOR_GRID, CONTEXT_KEY_LEVELS, valuation_model)
 
+    def on_result(context, floor, result):
+        bandit.update(context, floor, float(result.get("revenue") or 0.0))
+
     log_path = args.log or f"data/run_{int(time.time())}.jsonl"
     print(f"[run] logging to {log_path}", file=sys.stderr)
     runner = SessionRunner(
-        client, bandit, log_path,
+        client, bandit.choose_floor, log_path, on_result=on_result,
         num_workers=args.num_workers, rate_limit_qps=args.rate_limit_qps,
     )
     runner.run(duration_s=args.duration)
